@@ -24,7 +24,9 @@ import emu.grasscutter.game.inventory.GameItem;
 import emu.grasscutter.game.inventory.Inventory;
 import emu.grasscutter.game.mail.Mail;
 import emu.grasscutter.game.mail.MailHandler;
-import emu.grasscutter.game.managers.CookingManager;
+import emu.grasscutter.game.managers.cooking.ActiveCookCompoundData;
+import emu.grasscutter.game.managers.cooking.CookingCompoundManager;
+import emu.grasscutter.game.managers.cooking.CookingManager;
 import emu.grasscutter.game.managers.FurnitureManager;
 import emu.grasscutter.game.managers.ResinManager;
 import emu.grasscutter.game.managers.deforestation.DeforestationManager;
@@ -95,11 +97,13 @@ public class Player {
     @Getter private int headImage;
     @Getter private int nameCardId = 210001;
     @Getter private Position position;
+    @Getter @Setter private Position prevPos;
     @Getter private Position rotation;
     @Getter private PlayerBirthday birthday;
     @Getter private PlayerCodex codex;
     @Getter @Setter private boolean showAvatars;
     @Getter @Setter private List<Integer> showAvatarList;
+    @Getter @Setter private List<Integer> showNameCardList;
     @Getter private Map<Integer, Integer> properties;
     @Getter @Setter private int currentRealmId;
     @Getter @Setter private int widgetId;
@@ -113,7 +117,9 @@ public class Player {
     @Getter private Set<Integer> flyCloakList;
     @Getter private Set<Integer> costumeList;
     @Getter @Setter private Set<Integer> rewardedLevels;
+    @Getter @Setter private Set<Integer> homeRewardedLevels;
     @Getter @Setter private Set<Integer> realmList;
+    @Getter @Setter private Set<Integer> seenRealmList;
     @Getter private Set<Integer> unlockedForgingBlueprints;
     @Getter private Set<Integer> unlockedCombines;
     @Getter private Set<Integer> unlockedFurniture;
@@ -121,10 +127,12 @@ public class Player {
     @Getter private Map<Long, ExpeditionInfo> expeditionInfo;
     @Getter private Map<Integer, Integer> unlockedRecipies;
     @Getter private List<ActiveForgeData> activeForges;
+    @Getter private Map<Integer, ActiveCookCompoundData> activeCookCompounds;
     @Getter private Map<Integer, Integer> questGlobalVariables;
     @Getter private Map<Integer, Integer> openStates;
     @Getter @Setter private Map<Integer, Set<Integer>> unlockedSceneAreas;
     @Getter @Setter private Map<Integer, Set<Integer>> unlockedScenePoints;
+    @Getter @Setter private List<Integer> chatEmojiIdList;
 
     @Transient private long nextGuid = 0;
     @Transient @Getter @Setter private int peerId;
@@ -152,6 +160,7 @@ public class Player {
     @Getter private transient FurnitureManager furnitureManager;
     @Getter private transient BattlePassManager battlePassManager;
     @Getter private transient CookingManager cookingManager;
+    @Getter private transient CookingCompoundManager cookingCompoundManager;
     @Getter private transient ActivityManager activityManager;
     @Getter private transient PlayerBuffManager buffManager;
     @Getter private transient PlayerProgressManager progressManager;
@@ -202,6 +211,7 @@ public class Player {
         this.questManager = new QuestManager(this);
         this.buffManager = new PlayerBuffManager(this);
         this.position = new Position(GameConstants.START_POSITION);
+        this.prevPos = new Position();
         this.rotation = new Position(0, 307, 0);
         this.sceneId = 3;
         this.regionId = 1;
@@ -223,12 +233,14 @@ public class Player {
         this.unlockedCombines = new HashSet<>();
         this.unlockedFurniture = new HashSet<>();
         this.unlockedFurnitureSuite = new HashSet<>();
+        this.activeCookCompounds=new HashMap<>();
         this.activeForges = new ArrayList<>();
         this.unlockedRecipies = new HashMap<>();
         this.questGlobalVariables = new HashMap<>();
         this.openStates = new HashMap<>();
         this.unlockedSceneAreas = new HashMap<>();
         this.unlockedScenePoints = new HashMap<>();
+        this.chatEmojiIdList = new ArrayList<>();
 
         this.attackResults = new LinkedBlockingQueue<>();
         this.coopRequests = new Int2ObjectOpenHashMap<>();
@@ -238,6 +250,8 @@ public class Player {
 
         this.birthday = new PlayerBirthday();
         this.rewardedLevels = new HashSet<>();
+        this.homeRewardedLevels = new HashSet<>();
+        this.seenRealmList = new HashSet<>();
         this.moonCardGetTimes = new HashSet<>();
         this.codex = new PlayerCodex(this);
         this.progressManager = new PlayerProgressManager(this);
@@ -253,6 +267,7 @@ public class Player {
         this.progressManager = new PlayerProgressManager(this);
         this.furnitureManager = new FurnitureManager(this);
         this.cookingManager = new CookingManager(this);
+        this.cookingCompoundManager=new CookingCompoundManager(this);
     }
 
     // On player creation
@@ -287,6 +302,7 @@ public class Player {
         this.progressManager = new PlayerProgressManager(this);
         this.furnitureManager = new FurnitureManager(this);
         this.cookingManager = new CookingManager(this);
+        this.cookingCompoundManager=new CookingCompoundManager(this);
     }
 
     public int getUid() {
@@ -304,7 +320,7 @@ public class Player {
 
     public Account getAccount() {
         if (this.account == null)
-            this.account = DatabaseHelper.getAccountById(Integer.toString(this.id));
+            this.account = DatabaseHelper.getAccountById(this.accountId);
         return this.account;
     }
 
@@ -376,6 +392,21 @@ public class Player {
             return;
         }
         this.realmList.add(realmId);
+
+        // Tell the client the realm is unlocked
+        if (realmId > 3) { // Realms 3 and below are default 'unlocked'
+            this.sendPacket(new PacketHomeModuleUnlockNotify(realmId));
+            this.getHome().onClaimReward(this);
+        }
+    }
+
+    public void addSeenRealmList(int seenId) {
+        if (this.seenRealmList == null) {
+            this.seenRealmList = new HashSet<>();
+        } else if (this.seenRealmList.contains(seenId)) {
+            return;
+        }
+        this.seenRealmList.add(seenId);
     }
 
     public int getExpeditionLimit() {
@@ -554,11 +585,11 @@ public class Player {
 
     public void onEnterRegion(SceneRegion region) {
         getQuestManager().forEachActiveQuest(quest -> {
-            if (quest.getTriggers().containsKey("ENTER_REGION_"+ String.valueOf(region.config_id))) {
+            if (quest.getTriggers().containsKey("ENTER_REGION_"+ region.config_id)) {
                 // If trigger hasn't been fired yet
-                if (!Boolean.TRUE.equals(quest.getTriggers().put("ENTER_REGION_"+ String.valueOf(region.config_id), true))) {
+                if (!Boolean.TRUE.equals(quest.getTriggers().put("ENTER_REGION_"+ region.config_id, true))) {
                     //getSession().send(new PacketServerCondMeetQuestListUpdateNotify());
-                    getQuestManager().triggerEvent(QuestTrigger.QUEST_CONTENT_TRIGGER_FIRE, quest.getTriggerData().get("ENTER_REGION_"+ String.valueOf(region.config_id)).getId(),0);
+                    getQuestManager().triggerEvent(QuestTrigger.QUEST_CONTENT_TRIGGER_FIRE, quest.getTriggerData().get("ENTER_REGION_"+ region.config_id).getId(),0);
                 }
             }
         });
@@ -567,11 +598,11 @@ public class Player {
 
     public void onLeaveRegion(SceneRegion region) {
         getQuestManager().forEachActiveQuest(quest -> {
-            if (quest.getTriggers().containsKey("LEAVE_REGION_"+ String.valueOf(region.config_id))) {
+            if (quest.getTriggers().containsKey("LEAVE_REGION_"+ region.config_id)) {
                 // If trigger hasn't been fired yet
-                if (!Boolean.TRUE.equals(quest.getTriggers().put("LEAVE_REGION_"+ String.valueOf(region.config_id), true))) {
+                if (!Boolean.TRUE.equals(quest.getTriggers().put("LEAVE_REGION_"+ region.config_id, true))) {
                     getSession().send(new PacketServerCondMeetQuestListUpdateNotify());
-                    getQuestManager().triggerEvent(QuestTrigger.QUEST_CONTENT_TRIGGER_FIRE, quest.getTriggerData().get("LEAVE_REGION_"+ String.valueOf(region.config_id)).getId(),0);
+                    getQuestManager().triggerEvent(QuestTrigger.QUEST_CONTENT_TRIGGER_FIRE, quest.getTriggerData().get("LEAVE_REGION_"+ region.config_id).getId(),0);
                 }
             }
         });
@@ -652,7 +683,8 @@ public class Player {
         return (int) ((theLastDay.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)); // By copilot
     }
 
-    public void rechargeMoonCard() {
+    public boolean rechargeMoonCard() {
+        if (this.moonCardDuration > 150) return false;  // Can only stack up to 180 days
         inventory.addItem(new GameItem(203, 300));
         if (!moonCard) {
             moonCard = true;
@@ -665,6 +697,7 @@ public class Player {
         if (!moonCardGetTimes.contains(moonCardStartTime)) {
             moonCardGetTimes.add(moonCardStartTime);
         }
+        return true;
     }
 
     public void getTodayMoonCard() {
@@ -935,7 +968,9 @@ public class Player {
                 .setNameCardId(this.getNameCardId())
                 .setIsShowAvatar(this.isShowAvatars())
                 .addAllShowAvatarInfoList(socialShowAvatarInfoList)
-                .setFinishAchievementNum(0);
+                .addAllShowNameCardIdList(this.getShowNameCardInfoList())
+                .setFinishAchievementNum(0)
+                .setFriendEnterHomeOptionValue(this.getHome() == null ? 0 : this.getHome().getEnterHomeOption());
         return social;
     }
 
@@ -966,6 +1001,11 @@ public class Player {
             }
         }
         return showAvatarInfoList;
+    }
+
+    public List<Integer> getShowNameCardInfoList() {
+        List<Integer> info = this.getShowNameCardList();
+        return info == null ? new ArrayList<>() : info;
     }
 
     public PlayerWorldLocationInfoOuterClass.PlayerWorldLocationInfo getWorldPlayerLocationInfo() {
@@ -1177,9 +1217,11 @@ public class Player {
         session.send(new PacketAllWidgetDataNotify(this));
         session.send(new PacketWidgetGadgetAllDataNotify());
         session.send(new PacketCombineDataNotify(this.unlockedCombines));
+        session.send(new PacketGetChatEmojiCollectionRsp(this.getChatEmojiIdList()));
         this.forgingManager.sendForgeDataNotify();
         this.resinManager.onPlayerLogin();
-        this.cookingManager.sendCookDataNofity();
+        this.cookingManager.sendCookDataNotify();
+        this.cookingCompoundManager.onPlayerLogin();
         this.teamManager.onPlayerLogin();
 
         getTodayMoonCard(); // The timer works at 0:0, some users log in after that, use this method to check if they have received a reward today or not. If not, send the reward.
@@ -1274,16 +1316,14 @@ public class Player {
 
         @Getter private final int value;
 
-        private SceneLoadState(int value) {
+        SceneLoadState(int value) {
             this.value = value;
         }
     }
 
     public int getPropertyMin(PlayerProperty prop) {
         if (prop.isDynamicRange()) {
-            return switch (prop) {
-                default -> 0;
-            };
+            return 0;
         } else {
             return prop.getMin();
         }

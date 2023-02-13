@@ -3,35 +3,27 @@ package emu.grasscutter.server.http.dispatch;
 import com.google.protobuf.ByteString;
 import emu.grasscutter.Grasscutter;
 import emu.grasscutter.Grasscutter.ServerRunMode;
+import emu.grasscutter.net.proto.QueryRegionListHttpRspOuterClass.QueryRegionListHttpRsp;
 import emu.grasscutter.net.proto.QueryCurrRegionHttpRspOuterClass.QueryCurrRegionHttpRsp;
-import emu.grasscutter.net.proto.RegionInfoOuterClass.RegionInfo;
 import emu.grasscutter.net.proto.RegionSimpleInfoOuterClass.RegionSimpleInfo;
+import emu.grasscutter.net.proto.RegionInfoOuterClass.RegionInfo;
 import emu.grasscutter.server.event.dispatch.QueryAllRegionsEvent;
 import emu.grasscutter.server.event.dispatch.QueryCurrentRegionEvent;
 import emu.grasscutter.server.http.Router;
 import emu.grasscutter.server.http.objects.QueryCurRegionRspJson;
 import emu.grasscutter.utils.Crypto;
-import emu.grasscutter.utils.FileUtils;
 import emu.grasscutter.utils.Utils;
-import express.Express;
-import express.http.Request;
-import express.http.Response;
 import io.javalin.Javalin;
+import io.javalin.http.Context;
 
 import javax.crypto.Cipher;
 import java.io.ByteArrayOutputStream;
-import java.security.KeyFactory;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.security.Signature;
 import java.util.regex.Pattern;
 
 import static emu.grasscutter.config.Configuration.*;
-import static emu.grasscutter.net.proto.QueryRegionListHttpRspOuterClass.QueryRegionListHttpRsp;
 
 /**
  * Handles requests related to region queries.
@@ -107,36 +99,36 @@ public final class RegionHandler implements Router {
         regionListResponse = Utils.base64Encode(updatedRegionList.toByteString().toByteArray());
     }
 
-    @Override public void applyRoutes(Express express, Javalin handle) {
-        express.get("/query_region_list", RegionHandler::queryRegionList);
-        express.get("/query_cur_region/:region", RegionHandler::queryCurrentRegion );
+    @Override public void applyRoutes(Javalin javalin) {
+        javalin.get("/query_region_list", RegionHandler::queryRegionList);
+        javalin.get("/query_cur_region/{region}", RegionHandler::queryCurrentRegion );
     }
 
     /**
      * @route /query_region_list
      */
-    private static void queryRegionList(Request request, Response response) {
+    private static void queryRegionList(Context ctx) {
         // Invoke event.
         QueryAllRegionsEvent event = new QueryAllRegionsEvent(regionListResponse); event.call();
         // Respond with event result.
-        response.send(event.getRegionList());
+        ctx.result(event.getRegionList());
 
         // Log to console.
-        Grasscutter.getLogger().info(String.format("[Dispatch] Client %s request: query_region_list", request.ip()));
+        Grasscutter.getLogger().info(String.format("[Dispatch] Client %s request: query_region_list", ctx.ip()));
     }
 
     /**
-     * @route /query_cur_region/:region
+     * @route /query_cur_region/{region}
      */
-    private static void queryCurrentRegion(Request request, Response response) {
+    private static void queryCurrentRegion(Context ctx) {
         // Get region to query.
-        String regionName = request.params("region");
-        String versionName = request.query("version");
+        String regionName = ctx.pathParam("region");
+        String versionName = ctx.queryParam("version");
         var region = regions.get(regionName);
 
         // Get region data.
         String regionData = "CAESGE5vdCBGb3VuZCB2ZXJzaW9uIGNvbmZpZw==";
-        if (request.query().values().size() > 0) {
+        if (ctx.queryParamMap().values().size() > 0) {
             if (region != null)
                 regionData = region.getBase64();
         }
@@ -150,20 +142,24 @@ public final class RegionHandler implements Router {
             try {
                 QueryCurrentRegionEvent event = new QueryCurrentRegionEvent(regionData); event.call();
 
-                if (request.query("dispatchSeed") == null) {
+                if (ctx.queryParam("dispatchSeed") == null) {
                     // More love for UA Patch players
                     var rsp = new QueryCurRegionRspJson();
 
                     rsp.content = event.getRegionInfo();
                     rsp.sign = "TW9yZSBsb3ZlIGZvciBVQSBQYXRjaCBwbGF5ZXJz";
 
-                    response.send(rsp);
+                    ctx.json(rsp);
                     return;
                 }
 
-                String key_id = request.query("key_id");
+                String key_id = ctx.queryParam("key_id");
+
+                if (key_id == null)
+                    throw new Exception("Key ID was not set");
+
                 Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-                cipher.init(Cipher.ENCRYPT_MODE, key_id.equals("3") ? Crypto.CUR_OS_ENCRYPT_KEY : Crypto.CUR_CN_ENCRYPT_KEY);
+                cipher.init(Cipher.ENCRYPT_MODE, Crypto.EncryptionKeys.get(Integer.valueOf(key_id)));
                 var regionInfo = Utils.base64Decode(event.getRegionInfo());
 
                 //Encrypt regionInfo in chunks
@@ -189,7 +185,7 @@ public final class RegionHandler implements Router {
                 rsp.content = Utils.base64Encode(encryptedRegionInfoStream.toByteArray());
                 rsp.sign = Utils.base64Encode(privateSignature.sign());
 
-                response.send(rsp);
+                ctx.json(rsp);
             }
             catch (Exception e) {
                 Grasscutter.getLogger().error("An error occurred while handling query_cur_region.", e);
@@ -199,10 +195,10 @@ public final class RegionHandler implements Router {
             // Invoke event.
             QueryCurrentRegionEvent event = new QueryCurrentRegionEvent(regionData); event.call();
             // Respond with event result.
-            response.send(event.getRegionInfo());
+            ctx.result(event.getRegionInfo());
         }
         // Log to console.
-        Grasscutter.getLogger().info(String.format("Client %s request: query_cur_region/%s", request.ip(), regionName));
+        Grasscutter.getLogger().info(String.format("Client %s request: query_cur_region/%s", ctx.ip(), regionName));
     }
 
     /**

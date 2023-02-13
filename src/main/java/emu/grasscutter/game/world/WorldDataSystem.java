@@ -85,6 +85,10 @@ public class WorldDataSystem extends BaseGameSystem {
         return level;
     }
     private InvestigationMonsterOuterClass.InvestigationMonster getInvestigationMonster(Player player, InvestigationMonsterData imd) {
+        if (imd.getGroupIdList().isEmpty() || imd.getMonsterIdList().isEmpty()) {
+            return null;
+        }
+
         var groupId = imd.getGroupIdList().get(0);
         var monsterId = imd.getMonsterIdList().get(0);
         var sceneId = imd.getCityData().getSceneId();
@@ -118,7 +122,7 @@ public class WorldDataSystem extends BaseGameSystem {
             var bossChest = group.searchBossChestInGroup();
             if (bossChest.isPresent()) {
                 builder.setResin(bossChest.get().resin);
-                builder.setBossChestNum(bossChest.get().take_num);
+                builder.setMaxBossChestNum(bossChest.get().take_num);
             }
         }
         return builder.build();

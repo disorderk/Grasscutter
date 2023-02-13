@@ -3,15 +3,14 @@ package emu.grasscutter.data.excels;
 import emu.grasscutter.data.GameData;
 import emu.grasscutter.data.GameResource;
 import emu.grasscutter.data.ResourceType;
-import lombok.AccessLevel;
 import lombok.Getter;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 @ResourceType(name = "OpenStateConfigData.json", loadPriority = ResourceType.LoadPriority.HIGHEST)
 public class OpenStateData extends GameResource {
+    @Getter(onMethod = @__(@Override))
     private int id;
     @Getter private boolean defaultState;
     @Getter private boolean allowClientOpen;
@@ -33,24 +32,16 @@ public class OpenStateData extends GameResource {
     }
 
     @Override
-    public int getId() {
-        return this.id;
-    }
-
-    @Override
     public void onLoad() {
         // Add this open state to the global list.
         GameData.getOpenStateList().add(this);
 
-        // Clean up cond.
-        List<OpenStateCond> cleanedConds = new ArrayList<>();
-        for (var c : this.cond) {
-            if (c.getCondType() != null) {
-                cleanedConds.add(c);
-            }
+        // Remove any empty conditions
+        if (this.cond != null) {
+            this.cond.removeIf(c -> c.getCondType() == null);
+        } else {
+            this.cond = new ArrayList<>();
         }
-
-        this.cond = cleanedConds;
     }
 }
 

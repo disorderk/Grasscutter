@@ -33,9 +33,11 @@ public abstract class GameEntity {
     @Getter @Setter private int configId;
     @Getter @Setter private int groupId;
 
-    private MotionState moveState;
+    @Getter @Setter private MotionState motionState;
     @Getter @Setter private int lastMoveSceneTimeMs;
     @Getter @Setter private int lastMoveReliableSeq;
+
+    @Getter @Setter private boolean lockHP;
 
     // Abilities
     private Object2FloatMap<String> metaOverrideMap;
@@ -43,7 +45,7 @@ public abstract class GameEntity {
 
     public GameEntity(Scene scene) {
         this.scene = scene;
-        this.moveState = MotionState.MOTION_STATE_NONE;
+        this.motionState = MotionState.MOTION_STATE_NONE;
     }
 
     public int getEntityType() {
@@ -82,14 +84,6 @@ public abstract class GameEntity {
 
     public abstract Position getRotation();
 
-    public MotionState getMotionState() {
-        return moveState;
-    }
-
-    public void setMotionState(MotionState moveState) {
-        this.moveState = moveState;
-    }
-
     public void setFightProperty(FightProperty prop, float value) {
         this.getFightProperties().put(prop.getId(), value);
     }
@@ -106,14 +100,15 @@ public abstract class GameEntity {
         return this.getFightProperties().getOrDefault(prop.getId(), 0f);
     }
 
+    public boolean hasFightProperty(FightProperty prop) {
+        return this.getFightProperties().containsKey(prop.getId());
+    }
+
     public void addAllFightPropsToEntityInfo(SceneEntityInfo.Builder entityInfo) {
-        for (Int2FloatMap.Entry entry : this.getFightProperties().int2FloatEntrySet()) {
-            if (entry.getIntKey() == 0) {
-                continue;
-            }
-            FightPropPair fightProp = FightPropPair.newBuilder().setPropType(entry.getIntKey()).setPropValue(entry.getFloatValue()).build();
-            entityInfo.addFightPropList(fightProp);
-        }
+        this.getFightProperties().forEach((key, value) -> {
+            if (key == 0) return;
+            entityInfo.addFightPropList(FightPropPair.newBuilder().setPropType(key).setPropValue(value).build());
+        });
     }
 
     protected MotionInfo getMotionInfo() {
@@ -153,7 +148,7 @@ public abstract class GameEntity {
 
     public void damage(float amount, int killerId) {
         // Check if the entity has properties.
-        if (this.getFightProperties() == null) {
+        if (this.getFightProperties() == null || !hasFightProperty(FightProperty.FIGHT_PROP_CUR_HP)) {
             return;
         }
 
@@ -164,9 +159,10 @@ public abstract class GameEntity {
             return; // If the event is canceled, do not damage the entity.
         }
 
-        if (getFightProperty(FightProperty.FIGHT_PROP_CUR_HP) != Float.POSITIVE_INFINITY) {
-          // Add negative HP to the current HP property.
-          this.addFightProperty(FightProperty.FIGHT_PROP_CUR_HP, -(event.getDamage()));
+        float curHp = getFightProperty(FightProperty.FIGHT_PROP_CUR_HP);
+        if (curHp != Float.POSITIVE_INFINITY && !lockHP || lockHP && curHp <= event.getDamage()) {
+            // Add negative HP to the current HP property.
+            this.addFightProperty(FightProperty.FIGHT_PROP_CUR_HP, -(event.getDamage()));
         }
 
         // Check if dead
@@ -209,6 +205,10 @@ public abstract class GameEntity {
      * Called when this entity is added to the world
      */
     public void onCreate() {
+
+    }
+
+    public void onRemoved() {
 
     }
 

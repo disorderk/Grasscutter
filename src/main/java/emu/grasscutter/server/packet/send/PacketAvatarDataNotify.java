@@ -1,14 +1,10 @@
 package emu.grasscutter.server.packet.send;
 
-import java.util.Map.Entry;
-
 import emu.grasscutter.game.avatar.Avatar;
 import emu.grasscutter.game.player.Player;
-import emu.grasscutter.game.player.TeamInfo;
 import emu.grasscutter.net.packet.BasePacket;
 import emu.grasscutter.net.packet.PacketOpcodes;
 import emu.grasscutter.net.proto.AvatarDataNotifyOuterClass.AvatarDataNotify;
-import emu.grasscutter.net.proto.AvatarTeamOuterClass.AvatarTeam;
 
 public class PacketAvatarDataNotify extends BasePacket {
 
@@ -17,26 +13,18 @@ public class PacketAvatarDataNotify extends BasePacket {
 
         AvatarDataNotify.Builder proto = AvatarDataNotify.newBuilder()
                 .setCurAvatarTeamId(player.getTeamManager().getCurrentTeamId())
-                //.setChooseAvatarGuid(player.getTeamManager().getCurrentCharacterGuid())
+                .setChooseAvatarGuid(player.getTeamManager().getCurrentCharacterGuid())
                 .addAllOwnedFlycloakList(player.getFlyCloakList())
                 .addAllOwnedCostumeList(player.getCostumeList());
 
-        for (Avatar avatar : player.getAvatars()) {
-            proto.addAvatarList(avatar.toProto());
-        }
+        player.getAvatars().forEach(avatar -> proto.addAvatarList(avatar.toProto()));
 
-        for (Entry<Integer, TeamInfo> entry : player.getTeamManager().getTeams().entrySet()) {
-            TeamInfo teamInfo = entry.getValue();
-            AvatarTeam.Builder avatarTeam = AvatarTeam.newBuilder()
-                    .setTeamName(teamInfo.getName());
-
-            for (int i = 0; i < teamInfo.getAvatars().size(); i++) {
-                Avatar avatar = player.getAvatars().getAvatarById(teamInfo.getAvatars().get(i));
-                avatarTeam.addAvatarGuidList(avatar.getGuid());
+        player.getTeamManager().getTeams().forEach((id, teamInfo) -> {
+            proto.putAvatarTeamMap(id, teamInfo.toProto(player));
+            if (id > 4) {  // Add the id list for custom teams.
+                proto.addBackupAvatarTeamOrderList(id);
             }
-
-            proto.putAvatarTeamMap(entry.getKey(), avatarTeam.build());
-        }
+        });
 
         // Set main character
         Avatar mainCharacter = player.getAvatars().getAvatarById(player.getMainCharacterId());

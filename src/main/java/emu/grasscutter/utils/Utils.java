@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 
 import javax.annotation.Nullable;
 
+import static emu.grasscutter.utils.FileUtils.getResourcePath;
 import static emu.grasscutter.utils.Language.translate;
 
 @SuppressWarnings({"UnusedReturnValue", "BooleanMethodIsAlwaysInverted"})
@@ -169,19 +170,18 @@ public final class Utils {
         Logger logger = Grasscutter.getLogger();
         boolean exit = false;
 
-        String resourcesFolder = config.folderStructure.resources;
         String dataFolder = config.folderStructure.data;
 
         // Check for resources folder.
-        if (!fileExists(resourcesFolder)) {
+        if (!Files.exists(getResourcePath(""))) {
             logger.info(translate("messages.status.create_resources"));
             logger.info(translate("messages.status.resources_error"));
-            createFolder(resourcesFolder); exit = true;
+            createFolder(config.folderStructure.resources); exit = true;
         }
 
         // Check for BinOutput + ExcelBinOutput.
-        if (!fileExists(resourcesFolder + "BinOutput") ||
-                !fileExists(resourcesFolder + "ExcelBinOutput")) {
+        if (!Files.exists(getResourcePath("BinOutput")) ||
+            !Files.exists(getResourcePath("ExcelBinOutput"))) {
             logger.info(translate("messages.status.resources_error"));
             exit = true;
         }
@@ -394,5 +394,23 @@ public final class Utils {
      */
     public static <T> T drawRandomListElement(List<T> list) {
         return drawRandomListElement(list, null);
+    }
+
+    /***
+     * Splits a string by a character, into a list
+     * @param input The string to split
+     * @param separator The character to use as the split points
+     * @return A list of all the substrings
+     */
+    public static List<String> nonRegexSplit(String input, int separator) {
+        var output = new ArrayList<String>();
+        int start = 0;
+        for (int next = input.indexOf(separator); next > 0; next = input.indexOf(separator, start)) {
+            output.add(input.substring(start, next));
+            start = next + 1;
+        }
+        if (start < input.length())
+            output.add(input.substring(start));
+        return output;
     }
 }

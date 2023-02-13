@@ -1,12 +1,10 @@
 package emu.grasscutter.game.managers;
 
 import emu.grasscutter.data.GameData;
-import emu.grasscutter.data.common.ItemParamData;
 import emu.grasscutter.game.home.FurnitureMakeSlotItem;
-import emu.grasscutter.game.inventory.GameItem;
 import emu.grasscutter.game.player.BasePlayerManager;
 import emu.grasscutter.game.player.Player;
-import emu.grasscutter.game.props.ItemUseOp;
+import emu.grasscutter.game.props.ActionReason;
 import emu.grasscutter.net.proto.ItemParamOuterClass;
 import emu.grasscutter.net.proto.RetcodeOuterClass.Retcode;
 import emu.grasscutter.server.packet.send.*;
@@ -34,26 +32,19 @@ public class FurnitureManager extends BasePlayerManager {
         player.getSession().send(new PacketUnlockedFurnitureSuiteDataNotify(player.getUnlockedFurnitureSuite()));
     }
 
-    public synchronized boolean unlockFurnitureOrSuite(GameItem useItem) {
-        ItemUseOp itemUseOp = useItem.getItemData().getItemUse().get(0).getUseOp();
-
-        // Check
-        if (itemUseOp != ItemUseOp.ITEM_USE_UNLOCK_FURNITURE_SUITE && itemUseOp != ItemUseOp.ITEM_USE_UNLOCK_FURNITURE_FORMULA) {
-            return false;
+    public boolean unlockFurnitureFormula(int id) {
+        if (!player.getUnlockedFurniture().add(id)) {
+            return false;  // Already unlocked!
         }
+        notifyUnlockFurniture();
+        return true;
+    }
 
-        int furnitureIdOrSuiteId = Integer.parseInt(useItem.getItemData().getItemUse().get(0).getUseParam()[0]);
-
-        // Remove first
-        player.getInventory().removeItem(useItem, 1);
-
-        if (useItem.getItemData().getItemUse().get(0).getUseOp() == ItemUseOp.ITEM_USE_UNLOCK_FURNITURE_FORMULA) {
-            player.getUnlockedFurniture().add(furnitureIdOrSuiteId);
-            notifyUnlockFurniture();
-        }else {
-            player.getUnlockedFurnitureSuite().add(furnitureIdOrSuiteId);
-            notifyUnlockFurnitureSuite();
+    public boolean unlockFurnitureSuite(int id) {
+        if (!player.getUnlockedFurnitureSuite().add(id)) {
+            return false;  // Already unlocked!
         }
+        notifyUnlockFurnitureSuite();
         return true;
     }
 
@@ -133,6 +124,9 @@ public class FurnitureManager extends BasePlayerManager {
 
         player.getInventory().addItem(makeData.getFurnitureItemID(), makeData.getCount());
         player.getHome().getFurnitureMakeSlotItemList().remove(slotItem.get());
+
+        // Should be for first craft, but until first craft check exists add exp for each item crafted
+        player.getInventory().addItem(121, makeData.getExp(), ActionReason.FurnitureMakeTake);
 
         player.getSession().send(new PacketTakeFurnitureMakeRsp(Retcode.RET_SUCC_VALUE, makeId,
                 List.of(ItemParamOuterClass.ItemParam.newBuilder()
